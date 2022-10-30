@@ -1,7 +1,7 @@
 	#include "os.h"
 
 	// 声明本地以下符号是全局的,在其它源文件中可以访问
-	.global _start
+	.global _start, timer_int
 
 	// 指定以下的代码生成16位的机器指令,这样才能在启动时的实模式下运行
   .code16
@@ -26,8 +26,9 @@ read_self_all:
 	int $0x13
 	jc read_self_all // 读取失败则重新读，判断EFLAGS寄存器CF位
 
-	cli // 关闭中断
-	lgdt gdt_desc	  // 加载描述符表
+	cli 						// 关闭中断
+	lgdt gdt_desc	  // 加载全局描述符表
+	lidt idt_desc		// 加载中断描述符表
 	mov $1, %eax
 	lmsw %ax				// 设置PE位，进入保护模式
 	jmp $KERNEL_CODE_SEG, $_start_32	// 进入32位保护模式代码，可以运行32位指令
@@ -64,8 +65,24 @@ _start_32:
 	orl $(1 << 31), %eax		// 打开PG位，开启分页机制
 	mov %eax, %cr0
 
+	sti											// 允许中断
 	jmp .
 
+timer_int:
+	push %ds
+	pusha						// 保护现场，段寄存器不用保存
+
+	mov $0x20, %al
+	outb %al, $0x20	// 发送EOI
+
+	popa						// 恢复现场
+	pop %ds
+	iret						// 中断返回
+
 gdt_desc:
-	.word (256*8) -1 // 全局描述符表界限
-	.long gdt_table  // 全局描述符表地址
+	.word (256*8) - 1 // 全局描述符表界限
+	.long gdt_table   // 全局描述符表地址
+
+idt_desc:
+	.word (256*8) - 1
+	.long idt_table
