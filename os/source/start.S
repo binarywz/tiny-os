@@ -64,9 +64,15 @@ _start_32:
 	mov %cr0, %eax
 	orl $(1 << 31), %eax		// 打开PG位，开启分页机制
 	mov %eax, %cr0
-
-	sti											// 允许中断
-	jmp .
+	
+	// 下面模拟中断返回，从而实现从特权级0到特权级3的变化
+	// 中断发生时，会自动压入原SS, ESP, EFLAGS, CS, EIP到栈中
+	push $APP_DATA_SEG
+	push $task_dpl3_stack + 1024	// 特权级3时的栈
+	push $0x0									    // EFLAGS，暂时关闭中断
+	push $APP_CODE_SEG						// CPL=3时的选择子
+	push $task_0_entry						// eip
+	iret													// 从中断返回，将切换至任务0
 
 timer_int:
 	push %ds
@@ -78,6 +84,13 @@ timer_int:
 	popa						// 恢复现场
 	pop %ds
 	iret						// 中断返回
+
+task_0_entry:
+	// 进入任务0时，需要重设其数据段寄存器为特权级3的
+	mov %ss, %ax
+	mov %ax, %ds
+	mov %ax, %es
+	jmp .
 
 gdt_desc:
 	.word (256*8) - 1 // 全局描述符表界限
