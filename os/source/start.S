@@ -64,15 +64,20 @@ _start_32:
 	mov %cr0, %eax
 	orl $(1 << 31), %eax		// 打开PG位，开启分页机制
 	mov %eax, %cr0
+
+	// 设置当前的任务0
+	// 模拟中断返回，返回至任务0，特权级3模式
+	mov $TASK0_TSS_SEL, %ax		// 加载任务0对应的状态段
+	ltr %ax
 	
 	// 下面模拟中断返回，从而实现从特权级0到特权级3的变化
 	// 中断发生时，会自动压入原SS, ESP, EFLAGS, CS, EIP到栈中
 	push $APP_DATA_SEG
-	push $task_dpl3_stack + 1024	// 特权级3时的栈
-	push $0x0									    // EFLAGS，暂时关闭中断
-	push $APP_CODE_SEG						// CPL=3时的选择子
-	push $task_0_entry						// eip
-	iret													// 从中断返回，将切换至任务0
+	push $task0_dpl3_stack + 1024*4	// 特权级3时的栈
+	push $0x202								    	// EFLAGS，暂时关闭中断
+	push $APP_CODE_SEG							// CPL=3时的选择子
+	push $task_0_entry							// eip
+	iret														// 从中断返回，将切换至任务0
 
 timer_int:
 	push %ds
@@ -80,6 +85,12 @@ timer_int:
 
 	mov $0x20, %al
 	outb %al, $0x20	// 发送EOI
+
+	// 使用内核的数据段寄存器，因为要访问内核的数据
+	mov $KERNEL_DATA_SEG, %ax
+	mov %ax, %ds
+
+	call task_sched	// 调用调度函数
 
 	popa						// 恢复现场
 	pop %ds
@@ -90,7 +101,7 @@ task_0_entry:
 	mov %ss, %ax
 	mov %ax, %ds
 	mov %ax, %es
-	jmp .
+	jmp task_0
 
 gdt_desc:
 	.word (256*8) - 1 // 全局描述符表界限
