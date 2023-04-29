@@ -9,13 +9,14 @@ typedef unsigned int uint32_t;
  * @brief 系统页表
  * 下面配置中只做了一个处理，即将0x0-4MB虚拟地址映射到0-4MB的物理地址，做恒等映射。
  */
-#define MAP_ADDR  (0x80000000)            // 要映射的地址
-#define PDE_P			(1 << 0)
-#define PDE_W			(1 << 1)
-#define PDE_U			(1 << 2)
-#define PDE_PS		(1 << 7)
+#define MAP_ADDR    (0x80000000) // 要映射的地址
+#define PDE_P	    (1 << 0)     // 存在位
+#define PDE_W		(1 << 1)     // 读写位
+#define PDE_U		(1 << 2)     // 权限位
+#define PDE_PS		(1 << 7)     // 设置4MB映射
 uint8_t map_phy_buffer[4096] __attribute__((aligned(4096))) = {0x36};
-static uint32_t pg_table[1024] __attribute__((aligned(4096))) = {PDE_U};    // 要给个值，否则其实始化值不确定
+static uint32_t pg_table[1024] __attribute__((aligned(4096))) = {PDE_U}; // 要给个值，否则其实始化值不确定
+// pg_dir中每个元素可以单独设置自身的页表映射
 uint32_t pg_dir[1024] __attribute__((aligned(4096))) = {
     [0] = (0) | PDE_P | PDE_PS | PDE_W | PDE_U,	    // PDE_PS，开启4MB的页，恒等映射
 };
