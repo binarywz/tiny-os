@@ -21,12 +21,51 @@ uint32_t pg_dir[1024] __attribute__((aligned(4096))) = {
 };
 
 /**
+ * @brief 系统调用的API处理函数
+ */
+void do_syscall (int func, char *str, char color) {
+    static int row = 1;     // 初始值不能为0，否则其初始化值不确定
+
+    if (func == 2) {
+        // 显示器共80列，25行，按字符显示，每个字符需要用两个字节表示
+        unsigned short * dest = (unsigned short *)0xb8000 + 80*row;
+        while (*str) {
+            // 其中一个字节保存要显示的字符，另一个字节表示颜色
+            *dest++ = *str++ | (color << 8);
+        }
+
+        // 逐行显示，超过一行则回到第0行再显示
+        row = (row >= 25) ? 0 : row + 1;
+
+        // 加点延时，让显示慢下来
+        for (int i = 0; i < 0xFFFFFF; i++) ;
+    }
+}
+
+/**
+ * @brief 系统调用，在屏幕上显示字符串
+ */
+void sys_show(char *str, char color) {
+    const unsigned long sys_gate_addr[] = {0, SYSCALL_SEL};  // 使用特权级0
+
+    // 采用调用门, 这里只支持5个参数
+    // 用调用门的好处是会自动将参数复制到内核栈中，这样内核代码很好取参数
+    // 而如果采用寄存器传递，取参比较困难，需要先压栈再取
+    __asm__ __volatile__("push %[color];push %[str];push %[id];lcalll *(%[gate])\n\n"
+            ::[color]"m"(color), [str]"m"(str), [id]"r"(2), [gate]"r"(sys_gate_addr));
+}
+
+/**
  * @brief 任务0
  */
 void task_0 (void) {
+    char * str = "task a: 1234";
     uint8_t color = 0;
     for (;;) {
-        color++;
+        sys_show(str, color++);
+        
+        // CPL=3时，非特权级模式下，无法使用cli指令
+        // __asm__ __volatile__("cli");
     }
 } 
 
@@ -34,9 +73,10 @@ void task_0 (void) {
  * @brief 任务1
  */
 void task_1 (void) {
+    char * str = "task b: 5678";
     uint8_t color = 0xff;
     for (;;) {
-        color--;
+        sys_show(str, color--);
     }
 }
 
@@ -52,7 +92,7 @@ uint32_t task0_tss[] = {
     // prelink, esp0, ss0, esp1, ss1, esp2, ss2
     0, (uint32_t)task0_dpl0_stack + 4*1024, KERNEL_DATA_SEG, /* 后边不用使用 */ 0x0, 0x0, 0x0, 0x0,
     // cr3, eip, eflags, eax, ecx, edx, ebx, esp, ebp, esi, edi,
-    (uint32_t)pg_dir, (uint32_t)task_0/*入口地址*/, 0x202, 0xa, 0xc, 0xd, 0xb, (uint32_t)task1_dpl0_stack + 4*1024/* 栈 */, 0x1, 0x2, 0x3,
+    (uint32_t)pg_dir, (uint32_t)task_0/*入口地址*/, 0x202, 0xa, 0xc, 0xd, 0xb, (uint32_t)task0_dpl3_stack + 4*1024/* 栈 */, 0x1, 0x2, 0x3,
     // es, cs, ss, ds, fs, gs, ldt, iomap
     APP_DATA_SEG, APP_CODE_SEG, APP_DATA_SEG, APP_DATA_SEG, APP_DATA_SEG, APP_DATA_SEG, 0x0, 0x0,
 };
@@ -81,6 +121,9 @@ struct {uint16_t limit_l, base_l, basehl_attr, base_limit;} gdt_table[256] __att
     // 两个进程的task0和tas1的tss段:自己设置，直接写会编译报错
     [TASK0_TSS_SEL / 8] = {0x0068, 0, 0xe900, 0x0},
     [TASK1_TSS_SEL / 8] = {0x0068, 0, 0xe900, 0x0},
+
+    // 系统调用的调用门
+    [SYSCALL_SEL / 8] = {0x0000, KERNEL_CODE_SEG, 0xec03, 0x0000},
 };
 
 /**
@@ -103,6 +146,7 @@ void task_sched (void) {
 }
 
 void timer_int (void);
+void syscall_handler (void);
 void os_init (void) {
     // 初始化8259中断控制器，打开定时器中断
     outb(0x11, 0x20);       // 开始初始化主芯片
@@ -131,6 +175,7 @@ void os_init (void) {
     // 添加任务和系统调用
     gdt_table[TASK0_TSS_SEL / 8].base_l = (uint16_t)(uint32_t)task0_tss;
     gdt_table[TASK1_TSS_SEL / 8].base_l = (uint16_t)(uint32_t)task1_tss;
+    gdt_table[SYSCALL_SEL / 8].limit_l = (uint16_t)(uint32_t)syscall_handler;
 
     // 虚拟内存
     // 0x80000000开始的4MB区域的映射
